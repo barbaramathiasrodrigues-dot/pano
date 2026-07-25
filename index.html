@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🧽 Ciclo dos Panos de Chão — Modo Casa</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    body {
+      background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f1f5f9 100%);
+      min-height: 100vh;
+    }
+    .glass {
+      background: rgba(255, 255, 255, 0.75);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+    }
+    .progress-bar { transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+  </style>
+</head>
+<body class="p-4 md:p-8 font-sans text-slate-800">
+
+  <div x-data="panoApp()" x-init="initFirebase()" class="max-w-xl mx-auto space-y-6">
+
+    <!-- HEADER & STATUS RECURSO (MODO CASA) -->
+    <header class="glass rounded-3xl p-6 shadow-sm border border-white/60">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <span class="text-xs font-bold uppercase tracking-wider text-sky-600">Gestão de Recursos</span>
+          <h1 class="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            🧽 Panos de Chão
+          </h1>
+        </div>
+        <div class="text-right">
+          <span x-show="loading" class="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-full animate-pulse block mb-1">Sincronizando...</span>
+          <span :class="statusCor" class="text-xs font-bold px-3 py-1 rounded-full text-white shadow-sm" x-text="statusTexto"></span>
+        </div>
+      </div>
+
+      <!-- DASHBOARD / META MÍNIMA -->
+      <div class="space-y-2 bg-white/50 p-4 rounded-2xl border border-slate-100">
+        <div class="flex justify-between text-sm font-semibold text-slate-600">
+          <span>Prontos para Uso (Meta: <span x-text="metaMinima"></span>)</span>
+          <span class="font-bold text-slate-800" x-text="prontos + ' / ' + total"></span>
+        </div>
+        <div class="w-full bg-slate-200/80 rounded-full h-3.5 overflow-hidden p-0.5">
+          <div :class="prontos < metaMinima ? 'bg-amber-500' : 'bg-emerald-500'" class="h-full rounded-full progress-bar" :style="'width: ' + (prontos / total * 100) + '%'"></div>
+        </div>
+        
+        <!-- ALERTA DE ESTOQUE BAIXO -->
+        <template x-if="prontos < metaMinima">
+          <div class="mt-2 text-xs font-medium text-amber-800 bg-amber-100/80 p-2.5 rounded-xl flex items-center gap-2 border border-amber-200">
+            ⚠️ <span>Existem poucos panos limpos disponíveis! Considere lavar um lote.</span>
+          </div>
+        </template>
+      </div>
+    </header>
+
+    <!-- PAINEL DE CONTROLE DE ESTADOS (VISUALIZAÇÃO RÁPIDA) -->
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div class="glass p-4 rounded-2xl text-center border-l-4 border-l-emerald-500">
+        <span class="text-2xl font-extrabold text-emerald-600 block" x-text="prontos"></span>
+        <span class="text-xs font-medium text-slate-500">🟢 Estoque</span>
+      </div>
+      <div class="glass p-4 rounded-2xl text-center border-l-4 border-l-teal-500">
+        <span class="text-2xl font-extrabold text-teal-600 block" x-text="emUso"></span>
+        <span class="text-xs font-medium text-slate-500">🔵 Em Uso</span>
+      </div>
+      <div class="glass p-4 rounded-2xl text-center border-l-4 border-l-amber-500">
+        <span class="text-2xl font-extrabold text-amber-600 block" x-text="sujos"></span>
+        <span class="text-xs font-medium text-slate-500">🟡 Sujo</span>
+      </div>
+      <div class="glass p-4 rounded-2xl text-center border-l-4 border-l-sky-500">
+        <span class="text-2xl font-extrabold text-sky-600 block" x-text="lavando"></span>
+        <span class="text-xs font-medium text-slate-500">🔵 Lavagem</span>
+      </div>
+      <div class="glass p-4 rounded-2xl text-center border-l-4 border-l-purple-500">
+        <span class="text-2xl font-extrabold text-purple-600 block" x-text="secando"></span>
+        <span class="text-xs font-medium text-slate-500">🟣 Secagem</span>
+      </div>
+      <div class="glass p-4 rounded-2xl text-center border-l-4 border-l-slate-700">
+        <span class="text-2xl font-extrabold text-slate-700 block" x-text="perdidos"></span>
+        <span class="text-xs font-medium text-slate-500">⚫ Perdidos</span>
+      </div>
+    </div>
+
+    <!-- BOTÕES DE AÇÃO RÁPIDA -->
+    <div class="glass rounded-3xl p-6 shadow-sm space-y-4 border border-white/60">
+      <h2 class="text-base font-bold text-slate-700">Ações Rápidas</h2>
+
+      <!-- MODO 1: ESTOU USANDO -->
+      <template x-if="!modalDestino && !modoLavagem">
+        <div class="space-y-3">
+          <button @click="usarPano()" :disabled="prontos === 0" class="w-full py-4 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold rounded-2xl shadow-sm transition flex items-center justify-center gap-2 text-base">
+            ✔ Estou usando um pano
+          </button>
+
+          <template x-if="emUso > 0">
+            <button @click="modalDestino = true" class="w-full py-5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-extrabold rounded-2xl shadow-md transition text-lg flex items-center justify-center gap-2">
+              🧽 FINALIZEI A LIMPEZA
+            </button>
+          </template>
+        </div>
+      </template>
+
+      <!-- MODAL DE DESTINO DO PANO -->
+      <template x-if="modalDestino">
+        <div class="bg-white/90 p-5 rounded-2xl border border-amber-200 space-y-3">
+          <p class="text-sm font-bold text-slate-700 text-center">Para onde foi o pano finalizado?</p>
+          <div class="grid grid-cols-2 gap-2">
+            <button @click="moverFinalizado('sujos')" class="p-3 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded-xl text-xs font-bold">🪣 Balde / Tanque</button>
+            <button @click="moverFinalizado('lavando')" class="p-3 bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-900 rounded-xl text-xs font-bold">🧺 Máquina Direto</button>
+            <button @click="modalDestino = false" class="col-span-2 p-2 bg-slate-100 text-slate-600 rounded-xl text-xs font-medium">Ainda estou usando</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- BOTÃO DE VISÃO DE LOTE (LIGAR A MÁQUINA) -->
+      <template x-if="sujos > 0 && !modoLavagem">
+        <div class="pt-2 border-t border-slate-100">
+          <button @click="modoLavagem = true" class="w-full py-3 bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-2xl text-sm transition flex items-center justify-center gap-2">
+            🧺 Ligar a Máquina de Lavar (Aproveitar Lote)
+          </button>
+        </div>
+      </template>
+
+      <!-- TELA DE LOTE DA MÁQUINA -->
+      <template x-if="modoLavagem">
+        <div class="bg-sky-50/90 p-5 rounded-2xl border border-sky-200 space-y-3">
+          <p class="text-sm font-bold text-sky-900">Aproveitar esta lavagem em lote?</p>
+          <p class="text-xs text-sky-700">Você tem <strong x-text="sujos"></strong> panos sujos no tanque. Deseja mover todos para a máquina?</p>
+          <div class="flex gap-2">
+            <button @click="iniciarLavagemLote()" class="flex-1 py-3 bg-sky-600 text-white font-bold rounded-xl text-xs">✔ Mover Lote para Máquina</button>
+            <button @click="modoLavagem = false" class="py-3 px-4 bg-slate-200 text-slate-700 font-bold rounded-xl text-xs">Cancelar</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- CICLO DE SECAGEM E GUARDA -->
+      <template x-if="lavando > 0">
+        <button @click="estenderLote()" class="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-2xl text-sm transition">
+          ☀️ Estendi os panos no varal
+        </button>
+      </template>
+
+      <template x-if="secando > 0">
+        <button @click="guardarLote()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-sm transition">
+          🧺 Guardar Panos Secos no Estoque
+        </button>
+      </template>
+
+    </div>
+
+    <!-- INTELIGÊNCIA DE PADRÕES -->
+    <div class="glass rounded-3xl p-5 shadow-sm border border-amber-200/60 bg-gradient-to-r from-amber-50/50 to-orange-50/50">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-lg">💡</span>
+        <h3 class="text-xs font-bold uppercase tracking-wider text-amber-800">Inteligência de Padrões</h3>
+      </div>
+      <p class="text-xs text-amber-900 leading-relaxed italic">
+        "Toda vez que a casa entra em ciclo de limpeza, 2 panos tendem a ser esquecidos no tanque. Que tal colocá-los direto na máquina assim que finalizar?"
+      </p>
+    </div>
+
+  </div>
+
+  <!-- FIREBASE INTERFACE MODULE (PROJETO PANO-9A3F3) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAHU0Ld-OFIWkEvpLjHw4SRCGu0P-cBZBc",
+      authDomain: "pano-9a3f3.firebaseapp.com",
+      projectId: "pano-9a3f3",
+      storageBucket: "pano-9a3f3.firebasestorage.app",
+      messagingSenderId: "146899888411",
+      appId: "1:146899888411:web:407d62739b688826210bbe",
+      measurementId: "G-QBM4WDTGP3"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    window.db = db;
+    window.doc = doc;
+    window.setDoc = setDoc;
+    window.onSnapshot = onSnapshot;
+  </script>
+
+  <!-- LÓGICA DO APP (AlpineJS) -->
+  <script>
+    function panoApp() {
+      return {
+        loading: true,
+        metaMinima: 5,
+        total: 9,
+        prontos: 5,
+        emUso: 0,
+        sujos: 2,
+        lavando: 0,
+        secando: 1,
+        perdidos: 1,
+        modalDestino: false,
+        modoLavagem: false,
+
+        get statusCor() {
+          if (this.prontos >= this.metaMinima) return 'bg-emerald-500';
+          if (this.prontos >= 2) return 'bg-amber-500';
+          return 'bg-red-500';
+        },
+
+        get statusTexto() {
+          if (this.prontos >= this.metaMinima) return '🟢 Abastecido';
+          if (this.prontos >= 2) return '🟡 Atenção';
+          return '🔴 Crítico';
+        },
+
+        async initFirebase() {
+          const checkDb = setInterval(() => {
+            if (window.db) {
+              clearInterval(checkDb);
+              const docRef = window.doc(window.db, "modo_casa", "panos");
+              window.onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                  const data = docSnap.data();
+                  this.prontos = data.prontos ?? 5;
+                  this.emUso = data.emUso ?? 0;
+                  this.sujos = data.sujos ?? 2;
+                  this.lavando = data.lavando ?? 0;
+                  this.secando = data.secando ?? 1;
+                  this.perdidos = data.perdidos ?? 1;
+                }
+                this.loading = false;
+              });
+            }
+          }, 100);
+        },
+
+        async saveState() {
+          if (!window.db) return;
+          const payload = {
+            prontos: this.prontos,
+            emUso: this.emUso,
+            sujos: this.sujos,
+            lavando: this.lavando,
+            secando: this.secando,
+            perdidos: this.perdidos
+          };
+          const docRef = window.doc(window.db, "modo_casa", "panos");
+          await window.setDoc(docRef, payload, { merge: true });
+        },
+
+        usarPano() {
+          if (this.prontos > 0) {
+            this.prontos--;
+            this.emUso++;
+            this.saveState();
+          }
+        },
+
+        moverFinalizado(destino) {
+          if (this.emUso > 0) {
+            this.emUso--;
+            if (destino === 'sujos') this.sujos++;
+            if (destino === 'lavando') this.lavando++;
+            this.modalDestino = false;
+            this.saveState();
+          }
+        },
+
+        iniciarLavagemLote() {
+          this.lavando += this.sujos;
+          this.sujos = 0;
+          this.modoLavagem = false;
+          this.saveState();
+        },
+
+        estenderLote() {
+          this.secando += this.lavando;
+          this.lavando = 0;
+          this.saveState();
+        },
+
+        guardarLote() {
+          this.prontos += this.secando;
+          this.secando = 0;
+          this.saveState();
+        }
+      }
+    }
+  </script>
+</body>
+</html>
